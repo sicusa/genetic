@@ -1,0 +1,59 @@
+name:                genetic
+version:             0.1.0.0
+synopsis:            Genetic algorithms implemented in Haskell
+description:         Please see README.md
+homepage:            http://github.com/cikusa/genetic#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Tyler Ling
+maintainer:          tylerblugandersen@gmail.com
+copyright:           2015 Tyler Ling
+category:            Data
+build-type:          Simple
+-- extra-source-files:
+cabal-version:       >=1.10
+
+library
+  default-language: Haskell2010
+  exposed-modules:
+    Genetic.Core
+    Genetic.Mutation
+  build-depends:
+     base >= 4.7 && < 5
+   , MonadRandom
+   , mono-traversable
+   , vector
+   , vector-algorithms
+   , unordered-containers
+   , mtl
+   , primitive
+  default-extensions:
+    TypeFamilies
+    FlexibleInstances
+    FlexibleContexts
+    UndecidableInstances
+    ExistentialQuantification
+    MultiParamTypeClasses
+    AllowAmbiguousTypes
+
+executable genetic-exe
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+                     , genetic
+  default-language:    Haskell2010
+
+test-suite genetic-test
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Tests.hs
+  build-depends:       base
+                     , genetic
+                     , QuickCheck
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/cikusa/genetic
