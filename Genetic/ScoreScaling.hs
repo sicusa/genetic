@@ -13,35 +13,35 @@ import Control.Arrow
 import Data.Function
 import Prelude hiding (length)
 
-sclRanked :: ScoredGenomes g -> Vector (g, Score)
-sclRanked sgs = V.imap (\i (g, _) -> (g, fromIntegral i)) sorted
+sclIdentity :: Generation g -> Vector (g, Score)
+sclIdentity (Generation {..}) = V.zip genGenomes genScores
+
+sclRanked :: Generation g -> Vector (g, Score)
+sclRanked gen = V.imap (\i (g, _) -> (g, fromIntegral i)) sorted
   where
-    gs = sgenomes sgs
-    len = fromIntegral $ V.length gs
+    len = fromIntegral $ V.length $ genGenomes gen
+    scoredGs = sclIdentity gen
     sorted = runST $ do
-      mv <- V.thaw gs
+      mv <- V.thaw scoredGs
       VA.sortBy (compare `on` snd) mv
       V.unsafeFreeze mv
 
-sclSigma :: ScoredGenomes g -> Vector (g, Score)
-sclSigma sgs =
+sclSigma :: Generation g -> Vector (g, Score)
+sclSigma (Generation {..}) =
   if stdDev == 0
-    then V.map (second $ const 1) gs
-    else V.map (second formula) gs
+    then (id &&& const 1) <$> genGenomes
+    else V.zip genGenomes $ formula <$> genScores
   where
-    gs  = sgenomes sgs
-    total = stotal sgs
-    len = fromIntegral $ V.length gs
-    average = total / len
-    stdDev = V.sum (V.map (\x -> (snd x - average) ^ 2) gs) / len
+    len = fromIntegral $ V.length genGenomes
+    average = genTotalScore / len
+    stdDev = V.sum ((\x -> (x - average) ^ 2) <$> genScores) / len
     formula x = (x - average) / (2 * stdDev)
 
-sclBoltzmann :: Double -> Double -> ScoredGenomes g -> Vector (g, Score)
-sclBoltzmann initTemp deltaTemp sgs = V.map (second formula) gs
+sclBoltzmann :: Double -> Double -> Generation g -> Vector (g, Score)
+sclBoltzmann initTemp deltaTemp (Generation {..}) =
+  V.zip genGenomes $ formula <$> genScores
   where
-    gs = sgenomes sgs
-    total = stotal sgs
-    currTemp = initTemp - fromIntegral (sgeneration sgs) * deltaTemp
-    len = fromIntegral $ V.length gs
-    average = total / len
+    currTemp = initTemp - fromIntegral genNum * deltaTemp
+    len = fromIntegral $ V.length genGenomes
+    average = genTotalScore / len
     formula x = (x / currTemp) / (average / currTemp)

@@ -1,9 +1,9 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Genetic.Core where
 
@@ -17,16 +17,12 @@ import Control.Monad.ST
 import Data.Bits ((.&.), (.|.), FiniteBits, Bits)
 import qualified Data.Bits as B
 
-import Data.Sequences (IsSequence)
-import qualified Data.Sequences as Seq
-
 import qualified Data.Vector as V
 import Data.Vector (Vector)
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Mutable as VM
 
 import Data.Foldable (foldl', foldr')
-import Data.MonoTraversable (Element, olength, otoList)
 import Data.Function (on)
 
 -- for BGenWrap
@@ -45,14 +41,25 @@ class GenomeBase g where
   -- | Get the amount of genes.
   length :: g -> Int
   -- | Convert from a list.
-  fromList :: Gene g ~ e => [e] -> g
+  fromList :: [Gene g] -> g
   -- | Convert to a list.
-  toList :: Gene g ~ e => g -> [e]
+  toList :: g -> [Gene g]
   -- | Get a gene.
-  getG :: Gene g ~ e => Int -> g -> e
+  getG :: Int -> g -> Gene g
+  -- | Find the index of a given gene, return Nothing if the gene does not exist.
+  findG :: (Gene g ~ e, Eq e) => e -> g -> Maybe Int
 
   {-# INLINE toList #-}
   toList g = map (`getG` g) [0..length g - 1]
+
+  {-# INLINE findG #-}
+  findG v g = search 0
+    where
+      search i
+        | i == len      = Nothing
+        | getG i g == v = Just i
+        | otherwise     = search $ i + 1
+      len = length g
 
 -- | Genomes that only support permutation operators,
 -- used for problems which valid permutation is required for a feasible solution,
@@ -61,6 +68,8 @@ class GenomeBase g where
 class GenomeBase g => PermutationGenome g where
   -- | Swap two genes in one genome.
   swap :: Int -> Int -> g -> g
+  -- | Swap multiple genes.
+  swapMulti :: Foldable t => t (Int, Int) -> g -> g
   -- | Reverse a range of genomes.
   inverseRange :: (Int, Int) -> g -> g
   -- | Inverse the entire genome.
@@ -69,6 +78,9 @@ class GenomeBase g => PermutationGenome g where
   offsetRange :: (Int, Int) -> Int -> g -> g
   -- | Offset the gene.
   offset :: Int -> Int -> g -> g
+
+  {-# INLINE swapMulti #-}
+  swapMulti ips g = foldr' (uncurry swap) g ips
 
   {-# INLINE offset #-}
   offset i = offsetRange (i, i)
@@ -206,7 +218,7 @@ instance FiniteBits b => BinaryGenome (BGenWrap b) where
   {-# INLINE gxor #-}
   gxor = B.xor
 
-instance {-# OVERLAPPING #-} GenomeBase (Vector a) where
+instance GenomeBase (Vector a) where
   type Gene (Vector a) = a
 
   {-# INLINE length #-}
@@ -226,6 +238,12 @@ instance PermutationGenome (Vector a) where
   swap i1 i2 g = runST $ do
     mv <- V.thaw g
     VM.swap mv i1 i2
+    V.unsafeFreeze mv
+
+  {-# INLINE swapMulti #-}
+  swapMulti ips g = runST $ do
+    mv <- V.thaw g
+    mapM_ (uncurry $ VM.swap mv) ips
     V.unsafeFreeze mv
 
   offset _ 0 g = g
@@ -253,20 +271,59 @@ instance PermutationGenome (Vector a) where
       adj_o = max (-beg) . min (lasti - end) $ o
       diff = end - beg
 
+instance FreeGenome (Vector a) where
+  {-# INLINE setG #-}
+  setG i v g = runST $ do
+    mv <- V.thaw g
+    VM.write mv i v
+    V.unsafeFreeze mv
+
+  swapBetween i1 i2 g1 g2 = runST $ do
+    mv1 <- V.thaw g1
+    mv2 <- V.thaw g2
+    VM.write mv1 i1 v2
+    VM.write mv2 i2 v1
+    (,) <$> V.unsafeFreeze mv1 <*> V.unsafeFreeze mv2
+    where
+      v1 = g1 V.! i1
+      v2 = g2 V.! i2
+
+  swapRangeBetween (beg, end) g1 g2 = runST $ do
+    mv1 <- V.thaw g1
+    mv2 <- V.thaw g2
+    let {
+      swap i = do
+        let v1 = g1 V.! i
+            v2 = g2 V.! i
+        VM.write mv1 i v2
+        VM.write mv2 i v1
+    }
+    mapM_ swap [beg..end]
+    (,) <$> V.unsafeFreeze mv1 <*> V.unsafeFreeze mv2
+
 type Rate  = Double
 type Score = Double
 
-data ScoredGenomes g = ScoredGenomes
-  { sgenomes :: V.Vector (g, Score)
-  , stotal   :: Score
-  , sgeneration :: Int }
-  deriving (Show)
+data Generation g = Generation
+  { genGenomes    :: Vector g
+  , genScores     :: Vector Score
+  , genTotalScore :: Score
+  , genBestScore  :: Score
+  , genNum        :: Int }
 
 data GeneticSettings u = GeneticSettings
-  { crossoverRate  :: Rate
-  , mutationRate   :: Rate
-  , maxPopultation :: Rate
-  , customData     :: u }
+  { crossoverRate    :: Rate
+  , mutationRate     :: Rate
+  , maxPopultation   :: Int
+  , terminationScore :: Score
+  , userData         :: u }
+
+data GeneticOperators g = GeneticOperators
+  { scoreMarkOpr  :: g -> Score
+  , scoreScaleOpr :: Generation g -> Vector (g, Score)
+  , selectionOpr  :: forall m. MonadRandom m => Vector (g, Score) -> m g
+  , crossoverOpr  :: forall m. MonadRandom m => g -> g -> m (g, g)
+  , mutationOpr   :: forall m. MonadRandom m => g -> m g }
 
 {-# INLINE probEvent #-}
 probEvent :: (MonadRandom m) => Rate -> m g -> m g -> m g
@@ -279,3 +336,36 @@ probValue :: (MonadRandom m) => Rate -> g -> g -> m g
 probValue r def slt = do
   rf <- getRandomR (0, 1)
   return $ if rf > r then def else slt
+
+mapPairM :: (Monad m) => (a -> m b) -> (a, a) -> m (b, b)
+mapPairM f (a, b) = (,) <$> f a <*> f b
+
+concatTuples :: Vector (a, a) -> Vector a
+concatTuples v = let (l, r) = V.unzip v in V.concat [l, r]
+
+runGenetic :: (GenomeBase g, MonadRandom m) => GeneticSettings u -> GeneticOperators g -> Vector g -> m (Generation g)
+runGenetic (GeneticSettings{..}) (GeneticOperators{..}) = loop 0
+  where
+    loop generation gs =
+      if totalScore > terminationScore
+        then return gen
+        else do
+          offsprings <- concatTuples <$> V.replicateM (maxPopultation `div` 2) makeBaby
+          loop (generation + 1) offsprings
+      where
+        makeBaby = do
+          father <- selectionOpr scaledGs
+          mother <- selectionOpr scaledGs
+          probCrossoverOpr father mother >>= mapPairM probMutationOpr
+        scaledGs = scoreScaleOpr gen
+        gen = Generation
+          { genGenomes    = gs
+          , genScores     = scores
+          , genTotalScore = totalScore
+          , genBestScore  = bestScore
+          , genNum        = generation }
+        scores = fmap scoreMarkOpr gs
+        totalScore = V.sum scores
+        bestScore  = V.maximum scores
+    probCrossoverOpr g1 g2 = probEvent crossoverRate (return (g1, g2)) $ crossoverOpr g1 g2
+    probMutationOpr g = probEvent mutationRate (return g) $ mutationOpr g
