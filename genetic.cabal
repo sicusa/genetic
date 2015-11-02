@@ -27,14 +27,9 @@ library
    , unordered-containers
    , mtl
    , primitive
+   , QuickCheck
   default-extensions:
     TypeFamilies
-    FlexibleInstances
-    FlexibleContexts
-    UndecidableInstances
-    ExistentialQuantification
-    MultiParamTypeClasses
-    AllowAmbiguousTypes
 
 executable genetic-exe
   hs-source-dirs:      app

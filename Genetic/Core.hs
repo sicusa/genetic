@@ -1,3 +1,10 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Genetic.Core where
 
 import GHC.Exts (Constraint)
@@ -5,15 +12,16 @@ import GHC.Exts (Constraint)
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Random
+import Control.Monad.ST
 
-import Data.Bits ((.&.), (.|.), FiniteBits)
+import Data.Bits ((.&.), (.|.), FiniteBits, Bits)
 import qualified Data.Bits as B
 
 import Data.Sequences (IsSequence)
 import qualified Data.Sequences as Seq
 
 import qualified Data.Vector as V
-import Data.Vector.Generic (Vector)
+import Data.Vector (Vector)
 import qualified Data.Vector.Generic as VG
 import qualified Data.Vector.Mutable as VM
 
@@ -21,22 +29,27 @@ import Data.Foldable (foldl', foldr')
 import Data.MonoTraversable (Element, olength, otoList)
 import Data.Function (on)
 
+-- for BGenWrap
+import Text.Printf (PrintfArg)
+import Test.QuickCheck (Arbitrary)
+import Data.Ix (Ix)
+import Data.Data (Data)
+import Foreign.Storable (Storable)
+
 import Prelude hiding (length)
 
 -- | The 'GenomeBase' class represents possible solutions for a given problem.
 --
 class GenomeBase g where
-  type Gene g e :: Constraint
+  type Gene g :: *
   -- | Get the amount of genes.
   length :: g -> Int
   -- | Convert from a list.
-  fromList :: (Gene g e) => [e] -> g
+  fromList :: Gene g ~ e => [e] -> g
   -- | Convert to a list.
-  toList :: (Gene g e) => g -> [e]
+  toList :: Gene g ~ e => g -> [e]
   -- | Get a gene.
-  getG :: (Gene g e) => Int -> g -> e
-  -- | Default method for measuring the similarity of two genomes.
-  similarityDef :: g -> g -> Double
+  getG :: Gene g ~ e => Int -> g -> e
 
   {-# INLINE toList #-}
   toList g = map (`getG` g) [0..length g - 1]
@@ -72,7 +85,7 @@ class GenomeBase g => PermutationGenome g where
 --
 class PermutationGenome g => FreeGenome g where
   -- | Modify a gene with specific value.
-  setG :: (Gene g e) => Int -> e -> g -> g
+  setG :: Gene g ~ e => Int -> e -> g -> g
   -- | Swap two genes between two given genomes.
   swapBetween :: Int -> Int -> g -> g -> (g, g)
   -- | Swap a range between two given genomes.
@@ -102,8 +115,12 @@ class FreeGenome g => ExpandableGenome g where
   concat :: g -> g -> g
   repeat :: (Int, Int) -> Int -> g -> g
 
-instance {-# OVERLAPPABLE #-} FiniteBits b => GenomeBase b where
-  type Gene b e = e ~ Bool
+newtype BGenWrap b = BGen b
+  deriving (Bounded, Enum, Eq, Integral, Num, Ord, Read, Real, Show
+           ,FiniteBits, Bits, PrintfArg, Arbitrary, Data, Storable)
+
+instance FiniteBits b => GenomeBase (BGenWrap b) where
+  type Gene (BGenWrap b) = Bool
 
   {-# INLINE length #-}
   length = B.finiteBitSize
@@ -117,9 +134,6 @@ instance {-# OVERLAPPABLE #-} FiniteBits b => GenomeBase b where
   {-# INLINE getG #-}
   getG i b = B.testBit b i
 
-  {-# INLINE similarityDef #-}
-  similarityDef g1 g2 = fromIntegral . B.popCount . B.complement $ g1 `B.xor` g2
-
 {-# INLINE bitSet #-}
 bitSet :: FiniteBits b => Int -> Bool -> b -> b
 bitSet i True = flip B.setBit i
@@ -128,7 +142,7 @@ bitSet i _    = flip B.clearBit i
 bitPairs :: FiniteBits b => [(Int, Bool)] -> b -> b
 bitPairs l b = foldl' (\a (i, v) -> bitSet i v a) b l
 
-instance FiniteBits b => PermutationGenome b where
+instance FiniteBits b => PermutationGenome (BGenWrap b) where
   {-# INLINE swap #-}
   swap i1 i2 b =
     let v1 = B.testBit b i1
@@ -140,10 +154,10 @@ instance FiniteBits b => PermutationGenome b where
       then b
       else bitSet (i + adj_o) (B.testBit b i) $ repRes .|. (b .&. B.complement mask)
     where
+      lasti = length b - 1
       adj_o = max (-i) . min (lasti - i) $ o
       (ib, ie) | adj_o > 0 = (i, i + adj_o)
                | otherwise = (i + adj_o, i)
-      lasti = length b - 1
       emptyMask = B.complement B.zeroBits
       mask = uncurry (.&.) (flip B.shiftR (lasti - ie) &&& flip B.shiftL ib $ emptyMask)
       repRes = B.shift b (if adj_o > 0 then -1 else 1) .&. mask
@@ -166,7 +180,7 @@ instance FiniteBits b => PermutationGenome b where
       replacedMask = makeMask rend rbeg
       remain = b .&. B.complement (transferMask .|. replacedMask)
 
-instance FiniteBits b => FreeGenome b where
+instance FiniteBits b => FreeGenome (BGenWrap b) where
   {-# INLINE setG #-}
   setG i bitvalue b
     | bitvalue  = B.setBit b i
@@ -182,7 +196,7 @@ instance FiniteBits b => FreeGenome b where
       b1range = mask .&. b1
       b2range = mask .&. b2
 
-instance FiniteBits b => BinaryGenome b where
+instance FiniteBits b => BinaryGenome (BGenWrap b) where
   {-# INLINE shift #-}
   shift = flip B.shift
   {-# INLINE gand #-}
@@ -191,6 +205,53 @@ instance FiniteBits b => BinaryGenome b where
   gor  = (.|.)
   {-# INLINE gxor #-}
   gxor = B.xor
+
+instance {-# OVERLAPPING #-} GenomeBase (Vector a) where
+  type Gene (Vector a) = a
+
+  {-# INLINE length #-}
+  length = V.length
+
+  {-# INLINE fromList #-}
+  fromList = V.fromList
+
+  {-# INLINE toList #-}
+  toList = V.toList
+
+  {-# INLINE getG #-}
+  getG = flip (V.!)
+
+instance PermutationGenome (Vector a) where
+  {-# INLINE swap #-}
+  swap i1 i2 g = runST $ do
+    mv <- V.thaw g
+    VM.swap mv i1 i2
+    V.unsafeFreeze mv
+
+  offset _ 0 g = g
+  offset i o g = runST $ do
+    mv <- V.thaw g
+    if adj_o > 0
+      then mapM_ (\x -> VM.write mv (x - 1) $ g V.! x) [i+1..fpos]
+      else mapM_ (\x -> VM.write mv (x + 1) $ g V.! x) [fpos..i-1]
+    VM.write mv fpos $ g V.! i
+    V.unsafeFreeze mv
+    where
+      lasti = length g - 1
+      adj_o = max (-i) . min (lasti - i) $ o
+      fpos = i + adj_o
+
+  offsetRange (beg, end) o g = runST $ do
+    mv <- V.thaw g
+    if adj_o > 0
+      then mapM_ (\x -> VM.write mv (x - diff) $ g V.! x) [end+1..end+adj_o]
+      else mapM_ (\x -> VM.write mv (x + diff) $ g V.! x) [beg-1..beg+adj_o]
+    mapM_ (\x -> VM.write mv (x + adj_o) $ g V.! x) [beg..end]
+    V.unsafeFreeze mv
+    where
+      lasti = length g - 1
+      adj_o = max (-beg) . min (lasti - end) $ o
+      diff = end - beg
 
 type Rate  = Double
 type Score = Double

@@ -8,7 +8,7 @@ import Control.Monad.Random
 import qualified Data.Vector as V
 import Prelude hiding (length)
 
-mutMultiPoint :: (MonadRandom m, FreeGenome g, Gene g e) => (e -> e) -> Rate -> g -> m g
+mutMultiPoint :: (MonadRandom m, FreeGenome g, Gene g ~ Bool) => (Bool -> Bool) -> Rate -> g -> m g
 mutMultiPoint f r g = foldM mutateBit g [0..length g - 1]
   where mutateBit a p = probValue r a $ setG p (f $ getG p a) a
 
