@@ -301,7 +301,7 @@ instance FreeGenome (Vector a) where
     mapM_ swap [beg..end]
     (,) <$> V.unsafeFreeze mv1 <*> V.unsafeFreeze mv2
 
-type Rate  = Double
+type Probability = Double
 type Score = Double
 
 data Generation g = Generation
@@ -312,8 +312,8 @@ data Generation g = Generation
   , genNum        :: Int }
 
 data GeneticSettings u = GeneticSettings
-  { crossoverRate    :: Rate
-  , mutationRate     :: Rate
+  { crossoverProb    :: Probability
+  , mutationProb     :: Probability
   , maxPopultation   :: Int
   , terminationScore :: Score
   , userData         :: u }
@@ -326,13 +326,13 @@ data GeneticOperators g = GeneticOperators
   , mutationOpr   :: forall m. MonadRandom m => g -> m g }
 
 {-# INLINE probEvent #-}
-probEvent :: (MonadRandom m) => Rate -> m g -> m g -> m g
+probEvent :: (MonadRandom m) => Probability -> m g -> m g -> m g
 probEvent r def m = do
   rf <- getRandomR (0, 1)
   if rf > r then def else m
 
 {-# INLINE probValue #-}
-probValue :: (MonadRandom m) => Rate -> g -> g -> m g
+probValue :: (MonadRandom m) => Probability -> g -> g -> m g
 probValue r def slt = do
   rf <- getRandomR (0, 1)
   return $ if rf > r then def else slt
@@ -367,5 +367,5 @@ runGenetic (GeneticSettings{..}) (GeneticOperators{..}) = loop 0
         scores = fmap scoreMarkOpr gs
         totalScore = V.sum scores
         bestScore  = V.maximum scores
-    probCrossoverOpr g1 g2 = probEvent crossoverRate (return (g1, g2)) $ crossoverOpr g1 g2
-    probMutationOpr g = probEvent mutationRate (return g) $ mutationOpr g
+    probCrossoverOpr g1 g2 = probEvent crossoverProb (return (g1, g2)) $ crossoverOpr g1 g2
+    probMutationOpr g = probEvent mutationProb (return g) $ mutationOpr g

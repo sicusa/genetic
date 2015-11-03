@@ -47,8 +47,8 @@ main = do
   dataLines <- lines <$> readFile "att532.tsp"
   let cityMap = V.fromList $ map (toCity . words) dataLines
       customSettings = GeneticSettings
-        { crossoverRate    = 0.75
-        , mutationRate     = 0.2
+        { crossoverProb    = 0.75
+        , mutationProb     = 0.2
         , maxPopultation   = 50
         , terminationScore = 50000
         , userData         = cityMap}

@@ -31,7 +31,7 @@ crsSinglePoint g1 g2 = do
   return $ swapRangeBetween (splitPoint, lasti) g1 g2
   where lasti = length g1 - 1
 
-crsMultiPoint :: (MonadRandom m, FreeGenome g) => Rate -> g -> g -> m (g, g)
+crsMultiPoint :: (MonadRandom m, FreeGenome g) => Probability -> g -> g -> m (g, g)
 crsMultiPoint r g1 g2 = foldM mutate (g1, g2) [0..len - 1]
   where
     mutate (x, y) i = probValue r (x, y) $ swapBetween i i x y
@@ -44,7 +44,7 @@ crsRandomRange g1 g2 = do
   return $ swapRangeBetween (begi, endi) g1 g2
   where lasti = length g1 - 1
 
-crsPositionBased :: (MonadRandom m, FreeGenome g, Gene g ~ e, Eq e, Hashable e) => Rate -> g -> g -> m (g, g)
+crsPositionBased :: (MonadRandom m, FreeGenome g, Gene g ~ e, Eq e, Hashable e) => Probability -> g -> g -> m (g, g)
 crsPositionBased r g1 g2 = do
   ps <- filterM (const $ (< r) <$> getRandomR (0, 1)) indices
   let rests = indices \\ ps
