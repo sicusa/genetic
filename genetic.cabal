@@ -17,6 +17,7 @@ library
   default-language: Haskell2010
   exposed-modules:
     Genetic.Core
+    Genetic.Instance
     Genetic.Crossover
     Genetic.Mutation
     Genetic.ScoreScaling
@@ -31,6 +32,8 @@ library
    , primitive
    , hashable
    , QuickCheck
+   , lifted-async
+   , monad-control
   default-extensions:
     TypeFamilies
     FlexibleContexts
@@ -39,7 +42,7 @@ library
 executable genetic-exe
   hs-source-dirs:      app
   main-is:             Main.hs
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:         -O3 -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , genetic
                      , vector
@@ -56,7 +59,7 @@ test-suite genetic-test
   build-depends:       base
                      , genetic
                      , QuickCheck
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  ghc-options:         -O2 -threaded -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
   default-extensions:
     RecordWildCards

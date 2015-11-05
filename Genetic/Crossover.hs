@@ -4,12 +4,15 @@ import Genetic.Core
 
 import Control.Monad
 import Control.Monad.Random
+import Control.Monad.ST
 
 import Prelude hiding (length)
 import Data.List ((\\), foldl')
 import Data.Maybe (fromJust)
 
+import Data.Vector (Vector)
 import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as VM
 import qualified Data.HashSet as S
 import Data.Hashable (Hashable)
 
@@ -24,6 +27,24 @@ crsPartiallyMapped g1 g2 = do
       ng2 = swapMulti (V.imap (\i v -> (fromJust $ findG v g2, i)) vs1) g2
   return (ng1, ng2)
   where lasti = length g1 - 1
+
+crsQuickPartiallyMapped :: (MonadRandom m, Eq a) => Vector a -> Vector a -> m (Vector a, Vector a)
+crsQuickPartiallyMapped f m = do
+  let glen = V.length f
+  crossPoint1 <- getRandomR (0, glen - 2)
+  crossPoint2 <- getRandomR (crossPoint1 + 1, glen - 1)
+  return $ runST $ do
+    mvf <- V.thaw f
+    mvm <- V.thaw m
+    let { mapGnome i
+      | i > crossPoint2 = return ()
+      | otherwise = do
+        let v1 = f V.! i; v2 = m V.! i
+        VM.swap mvf i (fromJust $ V.findIndex (==v2) f)
+        VM.swap mvm i (fromJust $ V.findIndex (==v1) m)
+        mapGnome $ i + 1 }
+    mapGnome crossPoint1
+    (,) <$> V.unsafeFreeze mvf <*> V.unsafeFreeze mvm
 
 crsSinglePoint :: (MonadRandom m, FreeGenome g) => g -> g -> m (g, g)
 crsSinglePoint g1 g2 = do

@@ -3,6 +3,8 @@
 module Tests.Core where
 
 import Genetic.Core
+import Genetic.Instances
+
 import Data.Word
 import Debug.Trace
 import Text.Printf
