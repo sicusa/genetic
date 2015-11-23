@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Genetic.Core where
 
@@ -8,6 +10,7 @@ import Control.Monad
 import Control.Monad.Random
 import Control.Monad.ST
 import Control.Monad.Trans.Control
+import Control.Monad.Reader
 import Control.Concurrent.Async.Lifted
 
 import Data.Vector (Vector)
@@ -117,8 +120,7 @@ type Score = Double
 data GeneticSettings u = GeneticSettings
   { gsCrossoverProb    :: Probability
   , gsMutationProb     :: Probability
-  , gsPopultation      :: Int
-  , gsTerminationScore :: Score
+  , gsPopulation       :: Int
   , gsUserData         :: u }
 
 data Generation g = Generation
@@ -126,24 +128,24 @@ data Generation g = Generation
   , genScores     :: Vector Score
   , genTotalScore :: Score
   , genBestGenome :: (g, Score)
-  , genNum        :: Int }
+  , genCount      :: Int }
 
 data GeneticOperators g m = GeneticOperators
-  { scoreMarkOpr  :: g -> m Score
+  { scoreMarkOpr  :: Vector g -> m (Vector Score)
   , scoreScaleOpr :: Generation g -> m (Vector (g, Score))
   , selectionOpr  :: Int -> (g -> g -> m (g, g)) -> Vector (g, Score) -> m (Vector (g, g))
   , crossoverOpr  :: g -> g -> m (g, g)
   , mutationOpr   :: g -> m g
-  , epochListener :: Generation g -> m () }
+  , predicateOpr  :: Generation g -> Bool }
 
 {-# INLINE probEvent #-}
-probEvent :: (MonadRandom m) => Probability -> m g -> m g -> m g
+probEvent :: MonadRandom m => Probability -> m g -> m g -> m g
 probEvent r def m = do
   rf <- getRandomR (0, 1)
   if rf > r then def else m
 
 {-# INLINE probValue #-}
-probValue :: (MonadRandom m) => Probability -> g -> g -> m g
+probValue :: MonadRandom m => Probability -> g -> g -> m g
 probValue r def slt = do
   rf <- getRandomR (0, 1)
   return $ if rf > r then def else slt
@@ -152,33 +154,40 @@ mapPairM :: Monad m => (a -> m b) -> (a, a) -> m (b, b)
 mapPairM f (a, b) = (,) <$> f a <*> f b
 
 runGenetic
-  :: (GenomeBase g, MonadRandom m, MonadBaseControl IO m)
-  => GeneticSettings u -> GeneticOperators g m -> Vector g -> m (Generation g)
-runGenetic (GeneticSettings{..}) (GeneticOperators{..}) = loop 0
-  where
-    crsAndMut g1 g2 = crossoverOpr g1 g2 >>= mapPairM mutationOpr
-    loop generation gs = do
-      scores <- mapConcurrently scoreMarkOpr gs
-      let totalScore = V.sum scores
-          best = (V.unsafeIndex gs &&& V.unsafeIndex scores) $ V.maxIndex scores
+  :: (GenomeBase g, MonadRandom m, MonadBaseControl IO m, s ~ GeneticSettings u)
+  => s -> GeneticOperators g (ReaderT s m) -> Vector g -> m (Generation g)
+runGenetic settings oprs initgs = runReaderT (runGeneticBase oprs initgs) settings
 
-      let gen = Generation
-            { genGenomes    = gs
-            , genScores     = scores
-            , genTotalScore = totalScore
-            , genBestGenome = best
-            , genNum        = generation }
-      epochListener gen
+runGeneticBase
+  :: (GenomeBase g, MonadRandom m, MonadBaseControl IO m, MonadReader (GeneticSettings u) m)
+  => GeneticOperators g m -> Vector g -> m (Generation g)
+runGeneticBase (GeneticOperators{..}) initgs = do
+  settings <- ask
+  let population = gsPopulation settings
+      crossoverProb = gsCrossoverProb settings
+      mutationProb = gsMutationProb settings
 
-      if totalScore > gsTerminationScore
-        then return gen
-        else do
-          scaledGs <- scoreScaleOpr gen
-          offsprings <- selectionOpr (gsPopultation `div` 2) crsAndMut scaledGs
-          loop (generation + 1) $ runST $ do
-            os <- V.unsafeThaw gs
-            let writer i (g1, g2) = VM.write os (i*2) g1 >> VM.write os (i*2+1) g2
-            V.zipWithM_ writer (V.enumFromTo 0 $ V.length offsprings - 1) offsprings
-            V.unsafeFreeze os
-    probCrossoverOpr g1 g2 = probEvent gsCrossoverProb (return (g1, g2)) $ crossoverOpr g1 g2
-    probMutationOpr g = probEvent gsMutationProb (return g) $ mutationOpr g
+  let probCrossoverOpr g1 g2 = probEvent crossoverProb (return (g1, g2)) $ crossoverOpr g1 g2
+      probMutationOpr g = probEvent mutationProb (return g) $ mutationOpr g
+      crsAndMut g1 g2 = probCrossoverOpr g1 g2 >>= mapPairM probMutationOpr
+
+      loop generation gs = do
+        scores <- scoreMarkOpr gs
+        let best = (V.unsafeIndex gs &&& V.unsafeIndex scores) $ V.maxIndex scores
+            gen = Generation
+              { genGenomes    = gs
+              , genScores     = scores
+              , genTotalScore = V.sum scores
+              , genBestGenome = best
+              , genCount      = generation }
+        if predicateOpr gen
+          then return gen
+          else do
+            scaledGs <- scoreScaleOpr gen
+            offsprings <- selectionOpr (population `div` 2) crsAndMut scaledGs
+            loop (generation + 1) $ runST $ do
+              os <- V.unsafeThaw gs
+              let writer i (g1, g2) = VM.write os (i*2) g1 >> VM.write os (i*2+1) g2
+              V.zipWithM_ writer (V.enumFromTo 0 $ V.length offsprings - 1) offsprings
+              V.unsafeFreeze os
+  loop 0 initgs

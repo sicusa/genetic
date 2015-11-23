@@ -33,7 +33,7 @@ slcFromStepwiseAsync sltstep num opr gs =
 
 slcStepRouletteWheel :: MonadRandom m => Vector (g, Score) -> m g
 slcStepRouletteWheel sgs = do
-  slice <- getRandomR (0, fromIntegral $ V.length sgs - 1)
+  slice <- getRandomR (0, V.foldl' (\a (_, s) -> a + s) 0 sgs)
   return $ go slice 0 0
   where
     go slice acc curi =

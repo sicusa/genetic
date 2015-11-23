@@ -16,10 +16,10 @@ import qualified Data.Vector.Mutable as VM
 import qualified Data.HashSet as S
 import Data.Hashable (Hashable)
 
-crsPartiallyMapped :: (MonadRandom m, PermutationGenome g, Eq (Gene g)) => g -> g -> m (g, g)
-crsPartiallyMapped g1 g2 = do
+crsPartiallyMapped :: (MonadRandom m, PermutationGenome g, Eq (Gene g)) => Int -> g -> g -> m (g, g)
+crsPartiallyMapped maxLen g1 g2 = do
   begi <- getRandomR (0,    lasti)
-  endi <- getRandomR (begi, lasti)
+  endi <- getRandomR (begi, min lasti $ begi + maxLen)
   let is  = V.enumFromTo begi endi
       vs1 = flip getG g1 <$> is
       vs2 = flip getG g2 <$> is
@@ -28,14 +28,14 @@ crsPartiallyMapped g1 g2 = do
   return (ng1, ng2)
   where lasti = length g1 - 1
 
-crsQuickPartiallyMapped :: (MonadRandom m, Eq a) => Vector a -> Vector a -> m (Vector a, Vector a)
-crsQuickPartiallyMapped f m = do
+crsQuickPartiallyMapped :: (MonadRandom m, Eq a) => Int -> Vector a -> Vector a -> m (Vector a, Vector a)
+crsQuickPartiallyMapped maxLen f m = do
   let glen = V.length f
   crossPoint1 <- getRandomR (0, glen - 2)
-  crossPoint2 <- getRandomR (crossPoint1 + 1, glen - 1)
+  crossPoint2 <- getRandomR (crossPoint1 + 1, min (glen - 1) (crossPoint1 + maxLen))
   return $ runST $ do
-    mvf <- V.thaw f
-    mvm <- V.thaw m
+    mvf <- V.unsafeThaw f
+    mvm <- V.unsafeThaw m
     let { mapGnome i
       | i > crossPoint2 = return ()
       | otherwise = do
